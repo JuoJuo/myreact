@@ -1,9 +1,11 @@
 import $ from 'jquery';
 import {createUnit} from './unit';
+import {createElement} from './Element';
 
 const React = {
   render,
-  rootIndex: 0
+  rootIndex: 0,
+  createElement,
 };
 
 //element可能是文本 dom 或者自定义的组件
