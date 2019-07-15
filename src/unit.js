@@ -23,7 +23,7 @@ class NativeUnit extends Unit {
     this._reactid = reactid;
     const {type, props} = this._currentElement;
 
-    let startTag = `<${type} data-reactid=${this._reactid}`;
+    let startTag = `<${type} data-reactid="${this._reactid}"`;
     const endTag = `</${type}>`;
     let childString = '';
 
@@ -31,7 +31,7 @@ class NativeUnit extends Unit {
       if (/^on[A-Z]/.test(propName)) {
         const eventName = propName.slice(2).toLowerCase();
         // 第二个参数是命名空间，方便取消事件代理
-        $(document).delegate(`[data-reactid=${this._reactid}]`, `${eventName}.${this._reactid}`, props[propName]);
+        $(document).delegate(`[data-reactid="${this._reactid}"]`, `${eventName}.${this._reactid}`, props[propName]);
       }else if (propName === 'style') {
         const styleObj = props[propName];
 
@@ -48,7 +48,7 @@ class NativeUnit extends Unit {
         children.forEach((child, index) => {
           const childUnit = createUnit(child);
           const childMarkUp = childUnit.getMarkUp(`${this._reactid}.${index}`);
-          childString = `${childString}${childMarkUp}`
+          childString = `${childString}${childMarkUp}`;
         })
       }else{
         if (propName !== '__source' && propName !== '__self'){
@@ -57,6 +57,17 @@ class NativeUnit extends Unit {
       }
     }
     return `${startTag}>${childString}${endTag}`;
+  }
+}
+
+class CompositeUnit extends Unit {
+  getMarkUp(reactid){
+    this._reactid = reactid;
+    const {type:Component, props} = this._currentElement;
+    const instance = new Component(props);
+    const renderedElement = instance.render();
+    const u = createUnit(renderedElement);
+    return u.getMarkUp(this._reactid);
   }
 }
 
@@ -69,6 +80,11 @@ function createUnit(element) {
   // DOM节点
   if (element instanceof Element && typeof element.type === 'string') {
     return new NativeUnit(element);
+  }
+
+  // 自定义组件
+  if (element instanceof Element && typeof element.type === 'function') {
+    return new CompositeUnit(element);
   }
 }
 

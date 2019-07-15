@@ -1,6 +1,6 @@
 import React from './react';
 
-function sayHello(){
+function sayHello() {
   alert('kjflkdsjflkjkl');
 }
 
@@ -10,5 +10,33 @@ let button = (
     <b>hello</b>
   </button>
 );
-console.log(button);
-React.render(button, document.getElementById('root'));
+
+
+class Counter extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {number: 0};
+  }
+
+  componentWillMount() {
+    console.log('Counter componentWillMount')
+  }
+
+  componentDidMount() {
+    console.log('Counter componentDidMount')
+  }
+
+  handleClick = () => {
+    this.setState({number: this.state.number + 1});
+  };
+
+  render() {
+    let p = React.createElement('p', {style: {color: 'red'}}, this.props.name, this.state.number);
+    let button = React.createElement('button', {onClick: this.handleClick}, '+');
+    return React.createElement('div', {id: 'counter'}, p, button);
+  }
+}
+
+{/*<Counter name="xixi"/>*/}
+const ele = React.createElement(Counter, {name: '计数器：'});
+React.render(ele, document.getElementById('root'));
