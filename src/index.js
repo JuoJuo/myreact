@@ -31,6 +31,7 @@ class Counter extends React.Component {
   };
 
   render() {
+    console.log('render');
     let p = React.createElement('p', {style: {color: 'red'}}, this.props.name, this.state.number);
     let button = React.createElement('button', {onClick: this.handleClick}, '+');
     return React.createElement('div', {id: 'counter'}, p, button);

@@ -16,6 +16,7 @@ function render(element, container) {
   const unit = createUnit(element);
   const markup = unit.getMarkUp(React.rootIndex);
   $(container).html(markup);
+  $(document).trigger('mounted');
 }
 
 

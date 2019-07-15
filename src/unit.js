@@ -64,13 +64,26 @@ class CompositeUnit extends Unit {
   getMarkUp(reactid){
     this._reactid = reactid;
     const {type:Component, props} = this._currentElement;
-    const instance = new Component(props);
-    const renderedElement = instance.render();
-    const u = createUnit(renderedElement);
-    return u.getMarkUp(this._reactid);
+    // 记下组件实例，后边有用
+    const componentInstance = this._componentInstance = new Component(props);
+
+    // 记下CompositeUnit实例，后边有用
+    componentInstance.currentUnit = this;
+
+    componentInstance.componentWillMount && componentInstance.componentWillMount();
+
+    const renderedElement = componentInstance.render();
+
+    // 记下createUnit返回的实例，后边有用
+    const renderedUnitInstance = this._renderedUnitInstance = createUnit(renderedElement);
+    const renderedMarkUp = renderedUnitInstance.getMarkUp(this._reactid);
+
+    $(document).on('mounted', () => {
+      componentInstance.componentDidMount && componentInstance.componentDidMount();
+    });
+    return renderedMarkUp;
   }
 }
-
 
 function createUnit(element) {
   if (typeof element === 'string' || typeof element === 'number') {
