@@ -1,8 +1,9 @@
 import {Element} from './Element';
 import $ from 'jquery';
+import types from './types'
 
-let diffQueue;
-let updateDepth;
+let diffQueue = [];
+let updateDepth = 0;
 
 class Unit {
   constructor(element) {
@@ -36,7 +37,9 @@ class NativeUnit extends Unit {
     const oldProps = this._currentElement.props;
     const newProps = nextElement.props;
 
+    // DOM更新，是先更新属性
     this.updateDOMProperties(oldProps, newProps);
+    // 再更新里面的孩子
     this.updateDOMChildren(nextElement.props.children);
   }
 
@@ -45,21 +48,128 @@ class NativeUnit extends Unit {
    * @param newChildrenElements
    */
   updateDOMChildren(newChildrenElements) {
+    updateDepth++;
     this.diff(diffQueue, newChildrenElements);
+    updateDepth--;
+    if (updateDepth === 0) {
+      this.patch(diffQueue);
+      diffQueue = [];
+    }
+  }
+
+  patch(diffQueue) {
+    const deleteChildren = [];
+    const deleteMap = {};
+    for (let i = 0; i < diffQueue.length; i++) {
+      let difference = diffQueue[i];
+      if (difference.type === types.MOVE || difference.type === types.REMOVE) {
+        let fromIndex = difference.fromIndex;
+        let oldChild = $(difference.parentNode.children().get(fromIndex));
+
+        if (!deleteMap[difference.parentId]) {
+          deleteMap[difference.parentId] = {};
+        }
+        deleteMap[difference.parentId][fromIndex] = oldChild;
+        deleteChildren.push(oldChild);
+      }
+    }
+
+    $.each(deleteChildren, (idx, item) => $(item).remove());
+
+    for (let k = 0; k < diffQueue.length; k++) {
+      let difference = diffQueue[k];
+      switch (difference.type) {
+        case types.INSERT:
+          this.insertChildAt(difference.parentNode, $(difference.markUp), difference.toIndex);
+          break;
+        case types.MOVE:
+          this.insertChildAt(difference.parentNode, deleteMap[difference.parentId][difference.fromIndex], difference.toIndex);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  insertChildAt(parentNode, childNode, index) {
+    let oldChild = parentNode.children().get(index);
+    oldChild ? childNode.insertBefore(oldChild) : childNode.appendTo(parentNode);
   }
 
   diff(diffQueue, newChildrenElements) {
-    let oldChildUnitsMap = this.getOldChildrenMap(this._renderedChildUnits);
-    let newChildren = this.getNewChildren(oldChildUnitsMap, newChildrenElements);
+    const oldChildUnitsMap = this.getOldChildrenMap(this._renderedChildUnits);
+    // 这个地方存在递归
+    const o = this.getNewChildren(oldChildUnitsMap, newChildrenElements);
+    const newChildrenMap =  o.newChildrenMap;
+    const newChildrenUnits =  o.newChildrenUnits;
+    let lastIndex = 0;
+
+    for (let i = 0; i < newChildrenUnits.length; i++) {
+      const newUnit = newChildrenUnits[i];
+      const newKey = (newUnit._currentElement.props && newUnit._currentElement.props.key) || i.toString();
+      const oldChildUnit = oldChildUnitsMap[newKey];
+
+      //新老一致的话，说明是复用老节点的unit没有重新创建
+      if (oldChildUnit === newUnit) {
+        if (oldChildUnit._mountIndex < lastIndex) {
+          diffQueue.push({
+            parentId: this._reactid,
+            parentNode: $(`[data-reactid="${this._reactid}"]`),
+            type: types.MOVE,
+            fromIndex: oldChildUnit._mountIndex,
+            toIndex: i,
+          });
+        }
+        lastIndex = Math.max(lastIndex, oldChildUnit._mountIndex);
+      } else {
+        // oldChildUnit有值，说明key相同，取到了。
+        // 但是却不等于newUnit，说明是newUnit是新建的，说明type不同，比如原来是p后来改成了span，我们需要先删除老的，再插入新的
+        if(oldChildUnit) {
+          diffQueue.push({
+            parentId: this._reactid,
+            parentNode: $(`[data-reactid="${this._reactid}"]`),
+            type: types.REMOVE,
+            fromIndex: oldChildUnit._mountIndex,
+          });
+          this._renderedChildUnits = this._renderedChildUnits.filter(item => item !== oldChildUnit);
+          $(document).undelegate(`.${oldChildUnit._reactid}`)
+        }
+        diffQueue.push({
+          parentId: this._reactid,
+          parentNode: $(`[data-reactid="${this._reactid}"]`),
+          type: types.INSERT,
+          toIndex: i,
+          markUp: newUnit.getMarkUp(`${this._reactid}.${i}`),
+        });
+      }
+      newUnit._mountIndex = i;
+    }
+
+    for (let oldKey in oldChildUnitsMap) {
+      let oldChild = oldChildUnitsMap[oldKey];
+
+      if (!newChildrenMap.hasOwnProperty(oldKey)) {
+        diffQueue.push({
+          parentId: this._reactid,
+          parentNode: $(`[data-reactid="${this._reactid}"]`),
+          type: types.REMOVE,
+          fromIndex: oldChild._mountIndex,
+        });
+        this._renderedChildUnits = this._renderedChildUnits.filter(item => item !== oldChild);
+        $(document).undelegate(`.${oldChild._reactid}`);
+      }
+    }
+
+    console.log(this._reactid, diffQueue)
   }
 
   /**
    *
    * @param childUnits
    */
-  getOldChildrenMap(childUnits=[]){
+  getOldChildrenMap(childUnits = []) {
     let map = {};
-    for (let i=0; i < childUnits.length; i++){
+    for (let i = 0; i < childUnits.length; i++) {
       let key = (
         childUnits[i] &&
         childUnits[i]._currentElement &&
@@ -71,24 +181,38 @@ class NativeUnit extends Unit {
     return map;
   }
 
+  /**
+   * 如果前后的jsx需要深比较，会继续update递归
+   * 如果不需要深比较，而重建unit，则正常走完这个方法
+   * @param oldChildUnitsMap
+   * @param newChildrenElements
+   * @returns {{newChildrenMap, newChildrenUnits: Array}}
+   * 在这个方法里，如果通过新的jsx的key，去拿到老的unit，如果取到了，就对比新老的jsx的type，如果type同，我们复用老的unit，如果type不同我们重建unit
+   */
   getNewChildren(oldChildUnitsMap, newChildrenElements) {
-    const newChildren = [];
+    const newChildrenUnits = [];
+    const newChildrenMap = {};
 
     newChildrenElements.forEach((newElement, index) => {
       const newKey = (newElement.props && newElement.props.key) || index.toString();
       const oldUnit = oldChildUnitsMap[newKey];
+      //我们发现只要是索引做的map，总是能找到oldUnit，做无谓的重建节点，或者深度比较
       const oldElement = oldUnit && oldUnit._currentElement;
 
       if (shouldDeepCompare(oldElement, newElement)) {
+        //递归处，注意如果是textUnit，则更新会重置unit里面的_currentElement也就是里面的jsx
         oldUnit.update(newElement);
-        newChildren.push(oldUnit);
+        newChildrenUnits.push(oldUnit);
+        newChildrenMap[newKey] = oldUnit;
       } else {
         const nextUnit = createUnit(newElement);
-        newChildren.push(nextUnit);
+        newChildrenUnits.push(nextUnit);
+        newChildrenMap[newKey] = nextUnit;
+        this._renderedChildUnits[index] = nextUnit;
       }
     });
 
-    return newChildren;
+    return {newChildrenMap, newChildrenUnits};
   }
 
   /**
@@ -122,8 +246,8 @@ class NativeUnit extends Unit {
         });
       } else if (propName === 'className') {
         $(`[data-reactid="${this._reactid}"]`).attr('class', newProps[propName]);
-      }else {
-        $(`[data-reactid="${this._reactid}"]`).props(propName, newProps[propName]);
+      } else {
+        $(`[data-reactid="${this._reactid}"]`).prop(propName, newProps[propName]);
       }
     }
   }
@@ -157,6 +281,7 @@ class NativeUnit extends Unit {
         const children = props[propName];
         children.forEach((child, index) => {
           const childUnit = createUnit(child);
+          childUnit._mountIndex = index;
           this._renderedChildUnits.push(childUnit);
           const childMarkUp = childUnit.getMarkUp(`${this._reactid}.${index}`);
           childString = `${childString}${childMarkUp}`;
@@ -220,6 +345,9 @@ class CompositeUnit extends Unit {
     // type一样，就可以shouldDeepCompare，否则就直接干掉重建
     if (shouldDeepCompare(prevRenderedElement, nextRenderElement)) {
       // 这个update是谁，完全取决于preRenderedInstance是CompositeUnit、NativeUnit、TextUnit
+      //传的老的render的unit，传的是新的render的jsx。
+      // -----因为每个jsx会传给createUnit，得到对应的unit，所以在update的递归里，最终我们会拿到一个新的unit集合（里面的某些unit可能是复用的老的，某些可能是新创建的）
+      //拿到到新老的Unit做diff
       preRenderedInstance.update(nextRenderElement);
       this._componentInstance.componentDidUpdate && this._componentInstance.componentDidUpdate();
     } else {
@@ -246,6 +374,12 @@ class CompositeUnit extends Unit {
 
     componentInstance.componentWillMount && componentInstance.componentWillMount();
 
+    /**
+     * 复合组件render的出口就是：
+     *   native组件的render结果，而 native组件的render的出口就是text组件
+     *   或者text组件的render结果
+     *   总的来说，就是render出的jsx都会创建对应的unit对象，调用对应的getMarkUp
+     */
     const renderedElement = componentInstance.render();
 
     // 记下createUnit返回的实例，后边有用
